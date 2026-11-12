@@ -1,709 +1,579 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { initializeApp } from 'firebase/app';
-import { 
-  getAuth, 
-  signInAnonymously, 
-  signInWithCustomToken, 
-  onAuthStateChanged 
-} from 'firebase/auth';
-import { 
-  getFirestore, 
-  collection, 
-  onSnapshot, 
-  addDoc, 
-  serverTimestamp 
-} from 'firebase/firestore';
-import { 
-  Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer,
-  BarChart, Bar, XAxis, YAxis, Tooltip, Legend, CartesianGrid 
-} from 'recharts';
-import { 
-  Award, BarChart3, CheckCircle2, Download, HelpCircle, 
-  Info, RefreshCw, Send, User, Users, BookOpen, Layers, Sparkles
-} from 'lucide-react';
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>體育課程價值取向檢核表</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap');
+    body { font-family: 'Noto Sans TC', sans-serif; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen">
 
-// --- Firebase 基礎設定 ---
-const firebaseConfig = typeof __firebase_config !== 'undefined' 
-  ? JSON.parse(__firebase_config) 
-  : {
-      apiKey: "demo-api-key",
-      authDomain: "demo-app.firebaseapp.com",
-      projectId: "demo-app",
-      storageBucket: "demo-app.appspot.com",
-      messagingSenderId: "123456789",
-      appId: "1:123456789:web:123456789"
-    };
+  <!-- 頂部導覽列 -->
+  <header class="bg-indigo-700 text-white shadow-md sticky top-0 z-10">
+    <div class="max-w-4xl mx-auto px-4 py-4 flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h1 class="text-xl font-bold tracking-wide">體育課程價值取向檢核表</h1>
+        <p class="text-xs text-indigo-200 mt-0.5">請給每一條重要程度排序（5：最重要 ～ 1：最不重要）</p>
+      </div>
+      <div class="flex bg-indigo-800 p-1 rounded-lg">
+        <button id="tab-form" onclick="switchTab('form')" class="px-4 py-1.5 rounded-md text-sm font-medium bg-white text-indigo-700 shadow transition">
+          線上填答
+        </button>
+        <button id="tab-stats" onclick="switchTab('stats')" class="px-4 py-1.5 rounded-md text-sm font-medium text-indigo-100 hover:text-white transition">
+          全體結果分析 (<span id="total-count">0</span>)
+        </button>
+      </div>
+    </div>
+  </header>
 
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'pe-value-orientation-survey';
+  <main class="max-w-4xl mx-auto px-4 py-6">
+    <!-- 資料庫連線錯誤提示 -->
+    <div id="firebase-warning" class="hidden mb-6 bg-amber-50 border-l-4 border-amber-500 p-4 rounded-r-lg text-sm text-amber-800">
+      <p class="font-bold">⚠️ Firebase 資料庫連線異常</p>
+      <p class="mt-1">請確認您已在 Firebase 後台建立 <strong>Firestore Database</strong>，並將安全性規則（Rules）設為允許讀寫（<code>allow read, write: if true;</code>）。</p>
+    </div>
 
-// 題目資料定義
-const QUESTIONS = [
-  // 第一組 1 - 5
-  { id: 1, group: 1, text: '在遊戲和運動時，我教導學生有效的規則和策略。' },
-  { id: 2, group: 1, text: '我引導學生在他們個人能力和團體目標之間取得一個平衡。' },
-  { id: 3, group: 1, text: '我教導學生去察覺在上課中的能力表現和協助他人二者之間的不同。' },
-  { id: 4, group: 1, text: '我教導學生去選擇和他們獨特能力一致的目標。' },
-  { id: 5, group: 1, text: '我教導學生在一個特定的環境中去修正他們的動作和技能的表現以解決問題。' },
-  // 第二組 6 - 10
-  { id: 6, group: 2, text: '我教導學生在一個團體環境中去單獨從事有益的課程內容。' },
-  { id: 7, group: 2, text: '我教導學生一起互助合作以解決課堂上的問題。' },
-  { id: 8, group: 2, text: '我教導學生去學習相關的新技能的過程。' },
-  { id: 9, group: 2, text: '我教導學生去選擇他們認為有價值而且喜歡的活動。' },
-  { id: 10, group: 2, text: '我教導學生演示有效的技能表現和體適能的活動。' },
-  // 第三組 11 - 15
-  { id: 11, group: 3, text: '我教導學生去體認在不同的體型、身高和體重時會有不同的表現。' },
-  { id: 12, group: 3, text: '我鼓勵學生將他們最好的一面表現出來。' },
-  { id: 13, group: 3, text: '我教導學生在他們自己和其他同學的需求之間去找做一個平衡。' },
-  { id: 14, group: 3, text: '我要求學生去練習我在課堂上介紹、採用的技能、運動項目和體適能。' },
-  { id: 15, group: 3, text: '我評價學生的方法是基於他上課的努力成果。' }
-];
+    <!-- ==================== 分頁 1：線上填答與個人結果 ==================== -->
+    <section id="view-form">
+      <!-- 基本資料選填 -->
+      <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200 mb-6">
+        <h2 class="text-base font-bold text-slate-700 mb-3">填答者資訊（選填）</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-medium text-slate-500 mb-1">姓名 / 暱稱</label>
+            <input type="text" id="teacher-name" placeholder="例如：王老師（留空則顯示匿名）" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-slate-500 mb-1">任教階段 / 單位</label>
+            <select id="teacher-stage" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white">
+              <option value="國小">國小</option>
+              <option value="國中">國中</option>
+              <option value="高中職" selected>高中職</option>
+              <option value="大專院校">大專院校</option>
+              <option value="師資生/其他">師資生 / 其他</option>
+            </select>
+          </div>
+        </div>
+      </div>
 
-// 五大價值取向映射
-const VALUE_DIMENSIONS = [
-  { key: 'DM', name: '訓練精熟', desc: '強調體育運動技能、動作概念及體適能的熟練與掌握。', items: [1, 10, 14], color: '#3B82F6' },
-  { key: 'LP', name: '學習過程', desc: '強調學生學習如何學習、問題解決與自我調整動作能力。', items: [5, 8, 15], color: '#10B981' },
-  { key: 'SA', name: '自我實現', desc: '強調滿足個人需求、興趣、自我引導及潛能發揮。', items: [4, 9, 12], color: '#F59E0B' },
-  { key: 'EI', name: '生態整合', desc: '強調個人能力與環境、團體目標之間的平衡與協調。', items: [2, 6, 13], color: '#8B5CF6' },
-  { key: 'SR', name: '社會重建', desc: '強調人際互動、合作、社會適應及解決社會課堂問題。', items: [3, 7, 11], color: '#EC4899' }
-];
+      <!-- 填答規則說明 -->
+      <div class="bg-indigo-50 border border-indigo-100 rounded-xl p-4 mb-6 text-sm text-indigo-900">
+        <p class="font-bold mb-1">📌 填答規則提醒：</p>
+        <p>共分為三組，每組有 5 道題目。請在每組內將 <strong>5、4、3、2、1</strong> 五個分數分配給這五道題目（<strong>同一組內數字不可重複</strong>，5 表示最重要，1 表示最不重要）。</p>
+      </div>
 
-export default function App() {
-  const [user, setUser] = useState(null);
-  const [activeTab, setActiveTab] = useState('survey'); // 'survey' | 'result' | 'analytics'
-  const [teacherInfo, setTeacherInfo] = useState({ name: '', school: '', years: '' });
-  const [scores, setScores] = useState({});
-  const [submitting, setSubmitting] = useState(false);
-  const [allSubmissions, setAllSubmissions] = useState([]);
-  const [currentResult, setCurrentResult] = useState(null);
-  const [validationError, setValidationError] = useState('');
+      <!-- 題目容器 -->
+      <div id="questions-container" class="space-y-6"></div>
 
-  // 1. 初始化 Auth
-  useEffect(() => {
-    const initAuth = async () => {
-      try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
-        }
-      } catch (err) {
-        console.error("Firebase auth error:", err);
-      }
-    };
-    initAuth();
-    const unsubscribe = onAuthStateChanged(auth, setUser);
-    return () => unsubscribe();
-  }, []);
+      <!-- 送出按鈕 -->
+      <div class="mt-8 flex flex-col items-center">
+        <button id="submit-btn" onclick="submitSurvey()" class="w-full sm:w-auto px-8 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md transition disabled:opacity-50">
+          計算並送出我的價值取向結果
+        </button>
+        <p id="form-error" class="text-red-600 text-sm font-medium mt-3 hidden"></p>
+      </div>
 
-  // 2. 訂閱全體填答資料 (Firebase Firestore)
-  useEffect(() => {
-    if (!user) return;
-    const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'submissions');
-    const unsubscribe = onSnapshot(colRef, 
-      (snapshot) => {
-        const list = [];
-        snapshot.forEach((doc) => {
-          list.push({ id: doc.id, ...doc.data() });
-        });
-        setAllSubmissions(list);
-      },
-      (error) => {
-        console.error("Firestore error:", error);
-      }
-    );
-    return () => unsubscribe();
-  }, [user]);
+      <!-- 個人結果顯示區 (送出後顯示) -->
+      <div id="personal-result" class="hidden mt-8 bg-white p-6 rounded-2xl shadow-md border border-indigo-100">
+        <div class="border-b border-slate-100 pb-4 mb-6 flex flex-wrap justify-between items-center gap-2">
+          <div>
+            <span class="text-xs font-bold uppercase tracking-wider text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded">個人分析報告</span>
+            <h3 class="text-xl font-bold text-slate-800 mt-2" id="result-title">您的體育課程價值取向分佈</h3>
+          </div>
+          <button onclick="switchTab('stats')" class="text-sm text-indigo-600 hover:text-indigo-800 font-medium underline">
+            前往查看全體教師分析 →
+          </button>
+        </div>
 
-  // 單一分數變更處理
-  const handleScoreChange = (qId, val) => {
-    const numVal = parseInt(val, 10);
-    setScores(prev => ({
-      ...prev,
-      [qId]: isNaN(numVal) ? '' : numVal
-    }));
-    setValidationError('');
-  };
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
+          <div class="max-w-xs mx-auto w-full">
+            <canvas id="personalChart"></canvas>
+          </div>
+          <div id="personal-scores-list" class="space-y-3"></div>
+        </div>
 
-  // 算分邏輯
-  const calculateDimensionScores = (scoreMap) => {
-    const res = {};
-    VALUE_DIMENSIONS.forEach(dim => {
-      const total = dim.items.reduce((sum, qId) => sum + (Number(scoreMap[qId]) || 0), 0);
-      res[dim.key] = {
-        name: dim.name,
-        score: total,
-        level: total >= 12 ? '高水平' : total <= 6 ? '低水平' : '中水平'
-      };
-    });
-    return res;
-  };
+        <div class="mt-6 bg-slate-50 p-4 rounded-xl text-xs text-slate-600 leading-relaxed">
+          <p class="font-bold text-slate-700 mb-1">📊 量表計分標準說明：</p>
+          <p>• <strong>12 分（含）以上</strong>：代表「高水平」的價值取向，顯示您在課程設計與教學中高度重視該理念。</p>
+          <p>• <strong>7 ～ 11 分</strong>：代表「中等水平」的價值取向。</p>
+          <p>• <strong>6 分（含）以下</strong>：代表「低水平」的價值取向。</p>
+        </div>
+      </div>
+    </section>
 
-  // 表單驗證與提交
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setValidationError('');
+    <!-- ==================== 分頁 2：全體結果分析 ==================== -->
+    <section id="view-stats" class="hidden space-y-6">
+      <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+        <div class="flex flex-wrap justify-between items-center gap-4 border-b border-slate-100 pb-4 mb-6">
+          <div>
+            <h2 class="text-lg font-bold text-slate-800">全體教師填答總體分析</h2>
+            <p class="text-xs text-slate-500 mt-0.5">即時彙整所有已送出之問卷數據（目前共 <span id="stats-total-users" class="font-bold text-indigo-600">0</span> 筆資料）</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button onclick="exportCSV()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg shadow-sm transition flex items-center gap-1.5">
+              <span>📥 匯出 CSV</span>
+            </button>
+            <button onclick="clearAllRecords()" class="px-3 py-2 bg-slate-100 hover:bg-rose-100 text-slate-600 hover:text-rose-700 text-sm font-medium rounded-lg transition">
+              🗑️ 清空資料
+            </button>
+          </div>
+        </div>
 
-    if (!teacherInfo.name.trim()) {
-      setValidationError('請輸入您的姓名或代號');
-      return;
-    }
+        <div id="stats-empty" class="text-center py-12 text-slate-400">
+          目前尚無填答資料，請先至「線上填答」完成第一份問卷！
+        </div>
 
-    // 檢查 15 題是否都填寫
-    for (let i = 1; i <= 15; i++) {
-      if (!scores[i] || scores[i] < 1 || scores[i] > 5) {
-        setValidationError(`第 ${i} 題尚未給予 1 ~ 5 分的有效分數`);
-        return;
-      }
-    }
-
-    setSubmitting(true);
-    const calculatedDimScores = calculateDimensionScores(scores);
-
-    const submissionData = {
-      teacherName: teacherInfo.name,
-      school: teacherInfo.school || '未填寫',
-      years: teacherInfo.years || '未填寫',
-      scores: scores,
-      dimensions: calculatedDimScores,
-      createdAt: new Date().toISOString(),
-      timestamp: serverTimestamp()
-    };
-
-    try {
-      if (user) {
-        const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'submissions');
-        await addDoc(colRef, submissionData);
-      }
-      setCurrentResult(submissionData);
-      setActiveTab('result');
-    } catch (err) {
-      console.error("提交失敗:", err);
-      // 即便網路有狀況，本地仍可呈現結果
-      setCurrentResult(submissionData);
-      setActiveTab('result');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  // 計算全體平均與數據摘要
-  const analyticsData = useMemo(() => {
-    if (allSubmissions.length === 0) return null;
-
-    const totals = { DM: 0, LP: 0, SA: 0, EI: 0, SR: 0 };
-    const primaryCounts = { DM: 0, LP: 0, SA: 0, EI: 0, SR: 0 };
-
-    allSubmissions.forEach(sub => {
-      if (sub.dimensions) {
-        let maxScore = -1;
-        let maxKey = '';
-
-        VALUE_DIMENSIONS.forEach(dim => {
-          const s = sub.dimensions[dim.key]?.score || 0;
-          totals[dim.key] += s;
-          if (s > maxScore) {
-            maxScore = s;
-            maxKey = dim.key;
-          }
-        });
-
-        if (maxKey) primaryCounts[maxKey]++;
-      }
-    });
-
-    const count = allSubmissions.length;
-    const averages = VALUE_DIMENSIONS.map(dim => ({
-      key: dim.key,
-      name: dim.name,
-      average: Number((totals[dim.key] / count).toFixed(2)),
-      color: dim.color
-    }));
-
-    const distribution = VALUE_DIMENSIONS.map(dim => ({
-      name: dim.name,
-      count: primaryCounts[dim.key],
-      ratio: ((primaryCounts[dim.key] / count) * 100).toFixed(1) + '%'
-    }));
-
-    return { count, averages, distribution };
-  }, [allSubmissions]);
-
-  // 匯出 CSV 檔案
-  const exportToCSV = () => {
-    if (allSubmissions.length === 0) return;
-
-    let csvContent = "data:text/csv;charset=utf-8,\uFEFF";
-    // Header
-    csvContent += "教師姓名,服務學校,教學年資,填寫時間,訓練精熟,學習過程,自我實現,生態整合,社會重建,";
-    for (let i = 1; i <= 15; i++) csvContent += `Q${i},`;
-    csvContent += "\n";
-
-    // Rows
-    allSubmissions.forEach(sub => {
-      const d = sub.dimensions || {};
-      const s = sub.scores || {};
-      let row = `"${sub.teacherName || ''}","${sub.school || ''}","${sub.years || ''}","${sub.createdAt || ''}",`;
-      row += `${d.DM?.score || 0},${d.LP?.score || 0},${d.SA?.score || 0},${d.EI?.score || 0},${d.SR?.score || 0},`;
-      for (let i = 1; i <= 15; i++) row += `${s[i] || ''},`;
-      csvContent += row + "\n";
-    });
-
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `體育課程價值取向數據表_${new Date().toISOString().slice(0,10)}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
-  return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
-      {/* 頁首 Header */}
-      <header className="bg-emerald-700 text-white shadow-lg sticky top-0 z-50">
-        <div className="max-w-5xl mx-auto px-4 py-4 flex flex-col md:flex-row items-center justify-between gap-3">
-          <div className="flex items-center space-x-3">
-            <div className="bg-white/20 p-2 rounded-lg backdrop-blur-sm">
-              <Award className="w-7 h-7 text-emerald-100" />
+        <div id="stats-content" class="hidden space-y-8">
+          <!-- 圖表區 -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
+            <div>
+              <h3 class="text-sm font-bold text-center text-slate-700 mb-3">五大價值取向全體平均得分雷達圖</h3>
+              <div class="max-w-xs mx-auto">
+                <canvas id="groupRadarChart"></canvas>
+              </div>
             </div>
             <div>
-              <h1 className="text-xl md:text-2xl font-bold tracking-wide">體育課程價值取向檢核表</h1>
-              <p className="text-xs text-emerald-100">Physical Education Value Orientation Inventory (VOI)</p>
+              <h3 class="text-sm font-bold text-center text-slate-700 mb-3">高水平傾向（≥12分）人數比例</h3>
+              <canvas id="groupBarChart"></canvas>
             </div>
           </div>
 
-          {/* 導覽按鈕 */}
-          <nav className="flex space-x-2 bg-emerald-800/60 p-1.5 rounded-xl border border-emerald-600/40">
-            <button
-              onClick={() => setActiveTab('survey')}
-              className={`flex items-center space-x-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                activeTab === 'survey' 
-                  ? 'bg-white text-emerald-800 shadow-sm' 
-                  : 'text-emerald-100 hover:bg-emerald-700/50'
-              }`}
-            >
-              <BookOpen className="w-4 h-4" />
-              <span>教師填答</span>
-            </button>
-            {currentResult && (
-              <button
-                onClick={() => setActiveTab('result')}
-                className={`flex items-center space-x-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                  activeTab === 'result' 
-                    ? 'bg-white text-emerald-800 shadow-sm' 
-                    : 'text-emerald-100 hover:bg-emerald-700/50'
-                }`}
-              >
-                <Sparkles className="w-4 h-4" />
-                <span>個人報告</span>
-              </button>
-            )}
-            <button
-              onClick={() => setActiveTab('analytics')}
-              className={`flex items-center space-x-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                activeTab === 'analytics' 
-                  ? 'bg-white text-emerald-800 shadow-sm' 
-                  : 'text-emerald-100 hover:bg-emerald-700/50'
-              }`}
-            >
-              <Users className="w-4 h-4" />
-              <span>全體分析結果</span>
-              {allSubmissions.length > 0 && (
-                <span className="bg-emerald-500 text-white text-xs px-2 py-0.5 rounded-full ml-1">
-                  {allSubmissions.length}
-                </span>
-              )}
-            </button>
-          </nav>
+          <!-- 數據明細表格 -->
+          <div>
+            <h3 class="text-sm font-bold text-slate-700 mb-3">個別填答紀錄明細</h3>
+            <div class="overflow-x-auto border border-slate-200 rounded-xl">
+              <table class="w-full text-sm text-left">
+                <thead class="bg-slate-100 text-slate-600 text-xs">
+                  <tr>
+                    <th class="px-4 py-3">填答者</th>
+                    <th class="px-3 py-3">階段</th>
+                    <th class="px-3 py-3 text-center">訓練精熟</th>
+                    <th class="px-3 py-3 text-center">學習過程</th>
+                    <th class="px-3 py-3 text-center">自我實現</th>
+                    <th class="px-3 py-3 text-center">生態整合</th>
+                    <th class="px-3 py-3 text-center">社會重建</th>
+                  </tr>
+                </thead>
+                <tbody id="records-table-body" class="divide-y divide-slate-200 bg-white"></tbody>
+              </table>
+            </div>
+          </div>
         </div>
-      </header>
+      </div>
+    </section>
+  </main>
 
-      {/* 主要內容區 */}
-      <main className="flex-1 max-w-5xl w-full mx-auto p-4 md:p-6 space-y-6">
+  <script>
+    // =========================================================================
+    // Firebase 設定（已填入您的專屬專案金鑰）
+    // =========================================================================
+    const firebaseConfig = {
+      apiKey: "AIzaSyAATC3EtHqxIUsQleCVlrTdY1AxoQ3k9lI",
+      authDomain: "pe-orientation.firebaseapp.com",
+      projectId: "pe-orientation",
+      storageBucket: "pe-orientation.firebasestorage.app",
+      messagingSenderId: "609852644678",
+      appId: "1:609852644678:web:69d8aa17528001e37f5947",
+      measurementId: "G-62902WE2C5"
+    };
 
-        {/* 1. 填答頁面 TAB */}
-        {activeTab === 'survey' && (
-          <div className="space-y-6">
-            {/* 說明卡片 */}
-            <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200/80">
-              <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2 mb-2">
-                <Info className="w-5 h-5 text-emerald-600" />
-                量表說明與填答規則
-              </h2>
-              <p className="text-sm text-slate-600 leading-relaxed mb-4">
-                請評估您在體育課程教學中的理念與作為。本問卷分為三組，每組有 5 條描述。請給每一條重要程度評分：
-              </p>
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-center text-xs font-semibold">
-                <div className="bg-emerald-50 text-emerald-700 py-2 rounded-lg border border-emerald-200">5：最重要</div>
-                <div className="bg-emerald-50 text-emerald-700 py-2 rounded-lg border border-emerald-200">4：次重要</div>
-                <div className="bg-emerald-50 text-emerald-700 py-2 rounded-lg border border-emerald-200">3：重要</div>
-                <div className="bg-emerald-50 text-emerald-700 py-2 rounded-lg border border-emerald-200">2：不重要</div>
-                <div className="bg-emerald-50 text-emerald-700 py-2 rounded-lg border border-emerald-200">1：最不重要</div>
-              </div>
-            </div>
+    // 管理員清空資料密碼（可依需求自行修改）
+    const ADMIN_PASSWORD = "1234";
 
-            {/* 表單內容 */}
-            <form onSubmit={handleSubmit} className="space-y-6">
-              {/* 教師基本資料 */}
-              <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200/80 space-y-4">
-                <h3 className="text-base font-bold text-slate-800 flex items-center gap-2 border-b pb-3">
-                  <User className="w-5 h-5 text-emerald-600" />
-                  基本資料
-                </h3>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">教師姓名 / 代號 *</label>
-                    <input 
-                      type="text" 
-                      required
-                      placeholder="例：王老師 或 T01"
-                      value={teacherInfo.name}
-                      onChange={(e) => setTeacherInfo({ ...teacherInfo, name: e.target.value })}
-                      className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">任教學校 (選填)</label>
-                    <input 
-                      type="text" 
-                      placeholder="例：OO國小"
-                      value={teacherInfo.school}
-                      onChange={(e) => setTeacherInfo({ ...teacherInfo, school: e.target.value })}
-                      className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">體育教學年資 (選填)</label>
-                    <input 
-                      type="text" 
-                      placeholder="例：5年"
-                      value={teacherInfo.years}
-                      onChange={(e) => setTeacherInfo({ ...teacherInfo, years: e.target.value })}
-                      className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition"
-                    />
-                  </div>
-                </div>
-              </div>
+    // =========================================================================
+    // 題目與五大價值取向定義
+    // =========================================================================
+    const questionGroups = [
+      {
+        groupName: "第一組",
+        items: [
+          { id: 1, text: "在遊戲和運動時，我教導學生有效的規則和策略。" },
+          { id: 2, text: "我引導學生在他們個人能力和團體的目標之間取得一個平衡。" },
+          { id: 3, text: "我教導學生去察覺在上課中的能力表現和協助他人二者之間的不同。" },
+          { id: 4, text: "我教導學生去選擇和他們獨特能力一致的目標。" },
+          { id: 5, text: "我教導學生在一個特定的環境中去修正他們的動作和技能的表現以解決問題。" }
+        ]
+      },
+      {
+        groupName: "第二組",
+        items: [
+          { id: 6, text: "我教導學生在一個團體環境中去單獨從事有益的課程內容。" },
+          { id: 7, text: "我教導學生一起互助合作以解決課堂上的問題。" },
+          { id: 8, text: "我教導學生去學習相關的新的技能的過程。" },
+          { id: 9, text: "我教導學生去選擇他們認為有價值而且喜歡的活動。" },
+          { id: 10, text: "我教導學生演示有效的技能表現和體適能的活動。" }
+        ]
+      },
+      {
+        groupName: "第三組",
+        items: [
+          { id: 11, text: "我教導學生去體認在不同的體型、身高和體重時會有不同的表現。" },
+          { id: 12, text: "我鼓勵學生將他們最好的一面表現出來。" },
+          { id: 13, text: "我教導學生在他們自己和其他同學的需求之間去做一個平衡。" },
+          { id: 14, text: "我要求學生去練習我在課堂上介紹、採用的技能、運動項目和體適能。" },
+          { id: 15, text: "我評價學生的方法是基於他上課的努力成果。" }
+        ]
+      }
+    ];
 
-              {/* 題目組別渲染 */}
-              {[1, 2, 3].map(groupNum => {
-                const groupQuestions = QUESTIONS.filter(q => q.group === groupNum);
-                const groupName = groupNum === 1 ? '第一組' : groupNum === 2 ? '第二組' : '第三組';
-                
-                return (
-                  <div key={groupNum} className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200/80 space-y-4">
-                    <div className="flex items-center justify-between border-b pb-3">
-                      <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
-                        <Layers className="w-5 h-5 text-emerald-600" />
-                        {groupName} （題目 {groupQuestions[0].id} ～ {groupQuestions[groupQuestions.length - 1].id}）
-                      </h3>
-                      <span className="text-xs text-slate-500">（請輸入 1 ~ 5 分）</span>
-                    </div>
+    const orientations = [
+      { key: "DM", name: "訓練精熟", qIds: [1, 10, 14], desc: "重視運動技能熟練、體適能提升與規則策略的掌握。" },
+      { key: "LP", name: "學習過程", qIds: [5, 8, 15], desc: "強調動作學習的過程、問題解決能力及上課努力程度。" },
+      { key: "SA", name: "自我實現", qIds: [4, 9, 12], desc: "關注學生個人潛能發展、自主選擇與自我挑戰。" },
+      { key: "EI", name: "生態整合", qIds: [2, 6, 13], desc: "追求個人需求、團體目標與環境之間的和諧平衡。" },
+      { key: "SR", name: "社會重建", qIds: [3, 7, 11], desc: "重視團隊合作、尊重個別差異與社會公平正義。" }
+    ];
 
-                    <div className="space-y-4">
-                      {groupQuestions.map(q => (
-                        <div key={q.id} className="p-3.5 rounded-xl bg-slate-50 hover:bg-slate-100/80 transition flex flex-col md:flex-row md:items-center justify-between gap-3">
-                          <div className="flex items-start gap-3">
-                            <span className="flex-shrink-0 w-7 h-7 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold flex items-center justify-center mt-0.5">
-                              {q.id}
-                            </span>
-                            <p className="text-sm text-slate-700 leading-relaxed font-medium">
-                              {q.text}
-                            </p>
-                          </div>
+    let answers = {};
+    let allRecords = [];
+    let db = null;
+    let isFirebaseReady = false;
+    let personalChartInstance = null;
+    let groupRadarInstance = null;
+    let groupBarInstance = null;
 
-                          <div className="flex items-center gap-1.5 self-end md:self-auto flex-shrink-0">
-                            {[1, 2, 3, 4, 5].map(scoreVal => (
-                              <button
-                                key={scoreVal}
-                                type="button"
-                                onClick={() => handleScoreChange(q.id, scoreVal)}
-                                className={`w-9 h-9 rounded-lg text-sm font-semibold transition-all border ${
-                                  scores[q.id] === scoreVal
-                                    ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm scale-105'
-                                    : 'bg-white text-slate-600 border-slate-200 hover:border-emerald-300 hover:bg-emerald-50/50'
-                                }`}
-                              >
-                                {scoreVal}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
+    window.onload = function () {
+      renderQuestions();
+      initFirebase();
+    };
 
-              {/* 錯誤提示 */}
-              {validationError && (
-                <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-sm font-medium flex items-center gap-2">
-                  <HelpCircle className="w-5 h-5 flex-shrink-0" />
-                  <span>{validationError}</span>
-                </div>
-              )}
+    function initFirebase() {
+      try {
+        firebase.initializeApp(firebaseConfig);
+        db = firebase.firestore();
+        isFirebaseReady = true;
+        listenToRecords();
+      } catch (err) {
+        console.error("Firebase 初始化失敗:", err);
+        document.getElementById("firebase-warning").classList.remove("hidden");
+      }
+    }
 
-              {/* 送出按鈕 */}
-              <div className="flex justify-end pt-2">
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="w-full sm:w-auto px-8 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-lg shadow-emerald-600/30 flex items-center justify-center space-x-2 transition disabled:opacity-50 cursor-pointer"
-                >
-                  <Send className="w-5 h-5" />
-                  <span>{submitting ? '提交與計算中...' : '提交檢核並查看分析個人報告'}</span>
-                </button>
-              </div>
-            </form>
+    function renderQuestions() {
+      const container = document.getElementById("questions-container");
+      container.innerHTML = questionGroups.map((group, gIdx) => `
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+          <div class="bg-slate-100 px-5 py-3 border-b border-slate-200 flex justify-between items-center">
+            <span class="font-bold text-slate-700">${group.groupName}</span>
+            <span id="group-status-${gIdx}" class="text-xs font-medium px-2.5 py-0.5 rounded-full bg-slate-200 text-slate-600">
+              尚未完成排序
+            </span>
           </div>
-        )}
-
-        {/* 2. 個人結果 TAB */}
-        {activeTab === 'result' && currentResult && (
-          <div className="space-y-6">
-            <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200/80">
-              <div className="flex flex-col md:flex-row justify-between items-start md:items-center border-b pb-4 mb-6 gap-3">
-                <div>
-                  <span className="text-xs font-bold text-emerald-600 uppercase tracking-wider">診斷報告</span>
-                  <h2 className="text-xl font-bold text-slate-800">
-                    {currentResult.teacherName} 老師的體育價值取向剖面圖
-                  </h2>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    填答時間：{new Date(currentResult.createdAt).toLocaleString('zh-TW')}
-                  </p>
-                </div>
-                <div className="flex gap-2">
-                  <button 
-                    onClick={() => setActiveTab('survey')} 
-                    className="px-4 py-2 border border-slate-200 text-slate-600 rounded-xl text-xs font-semibold hover:bg-slate-50 flex items-center gap-1.5"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" /> 重新填答
-                  </button>
-                  <button 
-                    onClick={() => setActiveTab('analytics')} 
-                    className="px-4 py-2 bg-emerald-600 text-white rounded-xl text-xs font-semibold hover:bg-emerald-700 flex items-center gap-1.5 shadow-sm"
-                  >
-                    <Users className="w-3.5 h-3.5" /> 查看全體比較
-                  </button>
+          <div class="divide-y divide-slate-100">
+            ${group.items.map(item => `
+              <div class="p-4 sm:px-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/70 transition">
+                <p class="text-sm sm:text-base text-slate-800 leading-relaxed">
+                  <span class="font-bold text-indigo-600 mr-1">${item.id}、</span>${item.text}
+                </p>
+                <div class="flex items-center gap-1.5 shrink-0 self-end sm:self-center">
+                  ${[5, 4, 3, 2, 1].map(score => `
+                    <button type="button"
+                      id="btn-${item.id}-${score}"
+                      onclick="selectScore(${gIdx}, ${item.id}, ${score})"
+                      class="w-9 h-9 rounded-lg border border-slate-300 text-sm font-bold text-slate-600 hover:border-indigo-500 hover:text-indigo-600 transition">
+                      ${score}
+                    </button>
+                  `).join('')}
                 </div>
               </div>
-
-              {/* 圖表與得分展示 */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-center">
-                {/* 雷達圖 */}
-                <div className="h-80 w-full bg-slate-50 rounded-xl p-4 flex flex-col items-center justify-center">
-                  <h4 className="text-xs font-bold text-slate-500 mb-2">五大價值取向得分雷達圖 (滿分 15 分)</h4>
-                  <ResponsiveContainer width="100%" height="90%">
-                    <RadarChart data={VALUE_DIMENSIONS.map(d => ({
-                      dimension: d.name,
-                      score: currentResult.dimensions[d.key].score,
-                      fullMark: 15
-                    }))}>
-                      <PolarGrid />
-                      <PolarAngleAxis dataKey="dimension" tick={{ fill: '#475569', fontSize: 13 }} />
-                      <PolarRadiusAxis angle={30} domain={[0, 15]} />
-                      <Radar name="個人得分" dataKey="score" stroke="#059669" fill="#10B981" fillOpacity={0.5} />
-                    </RadarChart>
-                  </ResponsiveContainer>
-                </div>
-
-                {/* 分數列表與標準判讀 */}
-                <div className="space-y-3">
-                  <h4 className="text-sm font-bold text-slate-700 mb-2">得分詳細數據與評估：</h4>
-                  {VALUE_DIMENSIONS.map(dim => {
-                    const dimResult = currentResult.dimensions[dim.key];
-                    const score = dimResult.score;
-                    const isHigh = score >= 12;
-                    const isLow = score <= 6;
-
-                    return (
-                      <div key={dim.key} className="p-3 rounded-xl border border-slate-100 bg-slate-50 flex items-center justify-between">
-                        <div className="space-y-0.5">
-                          <div className="flex items-center gap-2">
-                            <span className="w-3 h-3 rounded-full" style={{ backgroundColor: dim.color }}></span>
-                            <span className="text-sm font-bold text-slate-800">{dim.name}</span>
-                          </div>
-                          <p className="text-xs text-slate-500">{dim.desc}</p>
-                        </div>
-                        <div className="text-right flex-shrink-0 ml-3">
-                          <span className="text-lg font-black text-slate-800">{score}</span>
-                          <span className="text-xs text-slate-400"> / 15分</span>
-                          <div className="mt-0.5">
-                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
-                              isHigh 
-                                ? 'bg-emerald-100 text-emerald-700 border border-emerald-300' 
-                                : isLow 
-                                  ? 'bg-rose-100 text-rose-700 border border-rose-300'
-                                  : 'bg-slate-200 text-slate-600'
-                            }`}>
-                              {dimResult.level} (≥12高 / ≤6低)
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* 取向對照原則說明 */}
-              <div className="mt-8 pt-6 border-t border-slate-100">
-                <h3 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
-                  <BookOpen className="w-4 h-4 text-emerald-600" />
-                  體育價值取向判定標準說明 (Ennis et al.)
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs text-slate-600">
-                  <div className="bg-emerald-50/60 p-3.5 rounded-xl border border-emerald-100">
-                    <span className="font-bold text-emerald-800 block mb-1">🟢 高水平取向（12 分及以上）</span>
-                    代表該價值取向是您在進行體育教學設計、選材與評量時的<strong>核心驅動力與關鍵優先考量</strong>。
-                  </div>
-                  <div className="bg-rose-50/60 p-3.5 rounded-xl border border-rose-100">
-                    <span className="font-bold text-rose-800 block mb-1">🔴 低水平取向（6 分及以下）</span>
-                    代表該理念在您目前的體育課堂中<strong>較少被強調或納入考量</strong>。
-                  </div>
-                </div>
-              </div>
-            </div>
+            `).join('')}
           </div>
-        )}
-
-        {/* 3. 全體結果分析 TAB */}
-        {activeTab === 'analytics' && (
-          <div className="space-y-6">
-            <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200/80">
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b pb-4 mb-6 gap-3">
-                <div>
-                  <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                    <BarChart3 className="w-6 h-6 text-emerald-600" />
-                    全體教師體育價值取向統計分析
-                  </h2>
-                  <p className="text-xs text-slate-500 mt-1">
-                    實時匯集所有填答數據，展現整體教師陣容的教學價值導向
-                  </p>
-                </div>
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={exportToCSV}
-                    disabled={!analyticsData || analyticsData.count === 0}
-                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-sm transition disabled:opacity-50"
-                  >
-                    <Download className="w-4 h-4" />
-                    <span>匯出原始資料 (CSV)</span>
-                  </button>
-                </div>
-              </div>
-
-              {analyticsData ? (
-                <div className="space-y-8">
-                  {/* 總摘要卡片 */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-center">
-                      <span className="text-xs text-slate-500 font-semibold block mb-1">總填答人數</span>
-                      <span className="text-3xl font-black text-emerald-600">{analyticsData.count}</span>
-                      <span className="text-xs text-slate-400 ml-1">人</span>
-                    </div>
-                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-center">
-                      <span className="text-xs text-slate-500 font-semibold block mb-1">最高平均取向</span>
-                      <span className="text-2xl font-bold text-slate-800">
-                        {([...analyticsData.averages].sort((a,b)=>b.average - a.average)[0])?.name || '-'}
-                      </span>
-                    </div>
-                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-center">
-                      <span className="text-xs text-slate-500 font-semibold block mb-1">最低平均取向</span>
-                      <span className="text-2xl font-bold text-slate-800">
-                        {([...analyticsData.averages].sort((a,b)=>a.average - b.average)[0])?.name || '-'}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* 全體平均長條圖 */}
-                  <div className="space-y-3">
-                    <h3 className="text-sm font-bold text-slate-800">五大價值取向全體平均分數 (滿分 15 分)</h3>
-                    <div className="h-72 w-full bg-slate-50 rounded-xl p-4 border border-slate-100">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={analyticsData.averages} margin={{ top: 20, right: 30, left: 0, bottom: 20 }}>
-                          <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                          <XAxis dataKey="name" tick={{ fontSize: 12, fill: '#475569' }} />
-                          <YAxis domain={[0, 15]} tick={{ fontSize: 12, fill: '#475569' }} />
-                          <Tooltip 
-                            formatter={(value) => [`${value} 分`, '平均得分']}
-                            contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
-                          />
-                          <Bar dataKey="average" radius={[6, 6, 0, 0]} fill="#10B981" />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </div>
-
-                  {/* 填答記錄列表 */}
-                  <div className="space-y-3 pt-4 border-t border-slate-100">
-                    <h3 className="text-sm font-bold text-slate-800 flex items-center justify-between">
-                      <span>填答教師明細資料</span>
-                      <span className="text-xs font-normal text-slate-500">共 {allSubmissions.length} 筆</span>
-                    </h3>
-
-                    <div className="overflow-x-auto rounded-xl border border-slate-200">
-                      <table className="w-full text-xs text-left text-slate-600">
-                        <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
-                          <tr>
-                            <th className="p-3">教師姓名</th>
-                            <th className="p-3">學校/年資</th>
-                            <th className="p-3 text-center">訓練精熟</th>
-                            <th className="p-3 text-center">學習過程</th>
-                            <th className="p-3 text-center">自我實現</th>
-                            <th className="p-3 text-center">生態整合</th>
-                            <th className="p-3 text-center">社會重建</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100 bg-white">
-                          {allSubmissions.map((sub, idx) => {
-                            const d = sub.dimensions || {};
-                            return (
-                              <tr key={sub.id || idx} className="hover:bg-slate-50">
-                                <td className="p-3 font-bold text-slate-800">{sub.teacherName}</td>
-                                <td className="p-3">{sub.school} / {sub.years}</td>
-                                <td className="p-3 text-center font-medium">{d.DM?.score ?? '-'}</td>
-                                <td className="p-3 text-center font-medium">{d.LP?.score ?? '-'}</td>
-                                <td className="p-3 text-center font-medium">{d.SA?.score ?? '-'}</td>
-                                <td className="p-3 text-center font-medium">{d.EI?.score ?? '-'}</td>
-                                <td className="p-3 text-center font-medium">{d.SR?.score ?? '-'}</td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="text-center py-16 space-y-3">
-                  <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center mx-auto text-slate-400">
-                    <Users className="w-6 h-6" />
-                  </div>
-                  <p className="text-slate-500 text-sm">目前尚無教師填答資料，請先前往「教師填答」完成問卷！</p>
-                  <button
-                    onClick={() => setActiveTab('survey')}
-                    className="px-4 py-2 bg-emerald-600 text-white text-xs font-bold rounded-xl"
-                  >
-                    前往填答
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-      </main>
-
-      {/* 頁尾 */}
-      <footer className="bg-slate-800 text-slate-400 text-xs py-6 mt-12">
-        <div className="max-w-5xl mx-auto px-4 text-center space-y-2">
-          <p>© 體育課程價值取向檢核表 (VOI) - 線上診斷與數據分析平台</p>
-          <p className="text-slate-500">五大取向計分依據：訓練精熟 (1,10,14) | 學習過程 (5,8,15) | 自我實現 (4,9,12) | 生態整合 (2,6,13) | 社會重建 (3,7,11)</p>
         </div>
-      </footer>
-    </div>
-  );
-}
+      `).join('');
+    }
+
+    function selectScore(groupIdx, qId, score) {
+      const groupItems = questionGroups[groupIdx].items;
+      groupItems.forEach(item => {
+        if (item.id !== qId && answers[item.id] === score) {
+          delete answers[item.id];
+        }
+      });
+      answers[qId] = score;
+      updateGroupButtonsUI(groupIdx);
+    }
+
+    function updateGroupButtonsUI(groupIdx) {
+      const groupItems = questionGroups[groupIdx].items;
+      let filledCount = 0;
+
+      groupItems.forEach(item => {
+        const selected = answers[item.id];
+        if (selected) filledCount++;
+
+        [5, 4, 3, 2, 1].forEach(s => {
+          const btn = document.getElementById(`btn-${item.id}-${s}`);
+          if (selected === s) {
+            btn.className = "w-9 h-9 rounded-lg bg-indigo-600 text-white text-sm font-bold shadow-sm transition transform scale-105";
+          } else {
+            btn.className = "w-9 h-9 rounded-lg border border-slate-300 text-sm font-bold text-slate-600 hover:border-indigo-500 hover:text-indigo-600 transition bg-white";
+          }
+        });
+      });
+
+      const statusBadge = document.getElementById(`group-status-${groupIdx}`);
+      if (filledCount === 5) {
+        statusBadge.textContent = "✓ 本組排序完成";
+        statusBadge.className = "text-xs font-bold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700";
+      } else {
+        statusBadge.textContent = `已完成 ${filledCount} / 5 題`;
+        statusBadge.className = "text-xs font-medium px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-700";
+      }
+    }
+
+    async function submitSurvey() {
+      const errorEl = document.getElementById("form-error");
+      errorEl.classList.add("hidden");
+
+      if (Object.keys(answers).length < 15) {
+        errorEl.textContent = "請先完成所有三組（共 15 題）的 1～5 重要程度排序再送出！";
+        errorEl.classList.remove("hidden");
+        return;
+      }
+
+      const scores = {};
+      orientations.forEach(o => {
+        scores[o.key] = o.qIds.reduce((sum, qId) => sum + (answers[qId] || 0), 0);
+      });
+
+      const record = {
+        name: document.getElementById("teacher-name").value.trim() || "匿名教師",
+        stage: document.getElementById("teacher-stage").value,
+        scores: scores,
+        rawAnswers: { ...answers },
+        timestamp: new Date().toISOString()
+      };
+
+      const btn = document.getElementById("submit-btn");
+      btn.disabled = true;
+      btn.textContent = "資料儲存中...";
+
+      try {
+        await db.collection("pe_value_orientations").add(record);
+        renderPersonalResult(record);
+      } catch (e) {
+        console.error(e);
+        document.getElementById("firebase-warning").classList.remove("hidden");
+        errorEl.textContent = "儲存至雲端失敗，請確認已在 Firebase 後台開啟 Firestore Database 與公開讀寫規則。";
+        errorEl.classList.remove("hidden");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "重新送出更新結果";
+      }
+    }
+
+    function renderPersonalResult(record) {
+      const resultBox = document.getElementById("personal-result");
+      resultBox.classList.remove("hidden");
+      document.getElementById("result-title").textContent = `${record.name}（${record.stage}）的課程價值取向分析`;
+
+      const listEl = document.getElementById("personal-scores-list");
+      listEl.innerHTML = orientations.map(o => {
+        const val = record.scores[o.key];
+        let badge = `<span class="text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-600">中等傾向</span>`;
+        if (val >= 12) badge = `<span class="text-xs px-2 py-0.5 rounded bg-indigo-100 text-indigo-700 font-bold">高水平傾向</span>`;
+        if (val <= 6) badge = `<span class="text-xs px-2 py-0.5 rounded bg-rose-100 text-rose-700">低水平傾向</span>`;
+
+        return `
+          <div class="p-3 rounded-xl border border-slate-100 bg-slate-50/60">
+            <div class="flex justify-between items-center mb-1">
+              <span class="font-bold text-slate-800">${o.name}</span>
+              <div class="flex items-center gap-2">
+                ${badge}
+                <span class="text-lg font-extrabold text-indigo-600">${val} <span class="text-xs font-normal text-slate-400">/ 15分</span></span>
+              </div>
+            </div>
+            <p class="text-xs text-slate-500">${o.desc}</p>
+          </div>
+        `;
+      }).join('');
+
+      const ctx = document.getElementById("personalChart").getContext("2d");
+      if (personalChartInstance) personalChartInstance.destroy();
+      personalChartInstance = new Chart(ctx, {
+        type: 'radar',
+        data: {
+          labels: orientations.map(o => o.name),
+          datasets: [{
+            label: '個人得分',
+            data: orientations.map(o => record.scores[o.key]),
+            backgroundColor: 'rgba(79, 70, 229, 0.2)',
+            borderColor: 'rgba(79, 70, 229, 1)',
+            pointBackgroundColor: 'rgba(79, 70, 229, 1)',
+            borderWidth: 2
+          }]
+        },
+        options: {
+          scales: { r: { min: 0, max: 15, ticks: { stepSize: 3 } } },
+          plugins: { legend: { display: false } }
+        }
+      });
+
+      resultBox.scrollIntoView({ behavior: "smooth" });
+    }
+
+    function listenToRecords() {
+      db.collection("pe_value_orientations")
+        .orderBy("timestamp", "desc")
+        .onSnapshot(snapshot => {
+          document.getElementById("firebase-warning").classList.add("hidden");
+          allRecords = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          updateStatsUI();
+        }, err => {
+          console.error("讀取失敗:", err);
+          document.getElementById("firebase-warning").classList.remove("hidden");
+        });
+    }
+
+    function updateStatsUI() {
+      const count = allRecords.length;
+      document.getElementById("total-count").textContent = count;
+      document.getElementById("stats-total-users").textContent = count;
+
+      if (count === 0) {
+        document.getElementById("stats-empty").classList.remove("hidden");
+        document.getElementById("stats-content").classList.add("hidden");
+        return;
+      }
+
+      document.getElementById("stats-empty").classList.add("hidden");
+      document.getElementById("stats-content").classList.remove("hidden");
+
+      const avgScores = orientations.map(o => {
+        const sum = allRecords.reduce((acc, r) => acc + (r.scores[o.key] || 0), 0);
+        return +(sum / count).toFixed(2);
+      });
+
+      const highRatios = orientations.map(o => {
+        const highCount = allRecords.filter(r => (r.scores[o.key] || 0) >= 12).length;
+        return +((highCount / count) * 100).toFixed(1);
+      });
+
+      const radarCtx = document.getElementById("groupRadarChart").getContext("2d");
+      if (groupRadarInstance) groupRadarInstance.destroy();
+      groupRadarInstance = new Chart(radarCtx, {
+        type: 'radar',
+        data: {
+          labels: orientations.map(o => o.name),
+          datasets: [{
+            label: '全體平均分數',
+            data: avgScores,
+            backgroundColor: 'rgba(16, 185, 129, 0.2)',
+            borderColor: 'rgba(16, 185, 129, 1)',
+            pointBackgroundColor: 'rgba(16, 185, 129, 1)',
+            borderWidth: 2
+          }]
+        },
+        options: {
+          scales: { r: { min: 0, max: 15, ticks: { stepSize: 3 } } }
+        }
+      });
+
+      const barCtx = document.getElementById("groupBarChart").getContext("2d");
+      if (groupBarInstance) groupBarInstance.destroy();
+      groupBarInstance = new Chart(barCtx, {
+        type: 'bar',
+        data: {
+          labels: orientations.map(o => o.name),
+          datasets: [{
+            label: '高水平傾向比例 (%)',
+            data: highRatios,
+            backgroundColor: 'rgba(79, 70, 229, 0.75)',
+            borderRadius: 6
+          }]
+        },
+        options: {
+          scales: { y: { min: 0, max: 100 } },
+          plugins: { legend: { display: false } }
+        }
+      });
+
+      const tbody = document.getElementById("records-table-body");
+      tbody.innerHTML = allRecords.map(r => `
+        <tr class="hover:bg-slate-50">
+          <td class="px-4 py-2.5 font-medium text-slate-800">${escapeHtml(r.name)}</td>
+          <td class="px-3 py-2.5 text-slate-500 text-xs">${escapeHtml(r.stage)}</td>
+          ${orientations.map(o => {
+            const s = r.scores[o.key];
+            const highlight = s >= 12 ? "font-bold text-indigo-600 bg-indigo-50/50" : (s <= 6 ? "text-slate-400" : "text-slate-700");
+            return `<td class="px-3 py-2.5 text-center ${highlight}">${s}</td>`;
+          }).join('')}
+        </tr>
+      `).join('');
+    }
+
+    async function clearAllRecords() {
+      const pwd = prompt("請輸入管理員密碼以清空所有測試資料（預設密碼 1234）：");
+      if (pwd === null) return;
+      if (pwd !== ADMIN_PASSWORD) {
+        alert("密碼錯誤，無法執行清空操作。");
+        return;
+      }
+      if (!confirm("確定要永久刪除目前所有填答紀錄嗎？此動作無法復原。")) return;
+
+      try {
+        const snapshot = await db.collection("pe_value_orientations").get();
+        const batch = db.batch();
+        snapshot.docs.forEach(doc => batch.delete(doc.ref));
+        await batch.commit();
+        alert("已成功清空所有資料！");
+      } catch (e) {
+        alert("清空失敗：" + e.message);
+      }
+    }
+
+    function exportCSV() {
+      if (allRecords.length === 0) return;
+      const headers = ["填答時間", "姓名", "任教階段", "訓練精熟", "學習過程", "自我實現", "生態整合", "社會重建", ...Array.from({length: 15}, (_, i) => `Q${i+1}`)];
+      const rows = allRecords.map(r => [
+        new Date(r.timestamp).toLocaleString("zh-TW"),
+        `"${r.name.replace(/"/g, '""')}"`,
+        r.stage,
+        r.scores.DM, r.scores.LP, r.scores.SA, r.scores.EI, r.scores.SR,
+        ...Array.from({length: 15}, (_, i) => r.rawAnswers?.[i+1] || "")
+      ]);
+
+      const csvContent = "\uFEFF" + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `體育課程價值取向分析結果_${new Date().toISOString().slice(0,10)}.csv`;
+      a.click();
+    }
+
+    function switchTab(tab) {
+      const formView = document.getElementById("view-form");
+      const statsView = document.getElementById("view-stats");
+      const tabForm = document.getElementById("tab-form");
+      const tabStats = document.getElementById("tab-stats");
+
+      if (tab === "form") {
+        formView.classList.remove("hidden");
+        statsView.classList.add("hidden");
+        tabForm.className = "px-4 py-1.5 rounded-md text-sm font-medium bg-white text-indigo-700 shadow transition";
+        tabStats.className = "px-4 py-1.5 rounded-md text-sm font-medium text-indigo-100 hover:text-white transition";
+      } else {
+        formView.classList.add("hidden");
+        statsView.classList.remove("hidden");
+        tabStats.className = "px-4 py-1.5 rounded-md text-sm font-medium bg-white text-indigo-700 shadow transition";
+        tabForm.className = "px-4 py-1.5 rounded-md text-sm font-medium text-indigo-100 hover:text-white transition";
+      }
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement("div");
+      div.textContent = text;
+      return div.innerHTML;
+    }
+  </script>
+</body>
+</html>
