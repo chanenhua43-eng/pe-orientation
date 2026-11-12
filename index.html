@@ -38,14 +38,19 @@
     <!-- 資料庫連線錯誤提示 -->
     <div id="firebase-warning" class="hidden mb-6 bg-amber-50 border-l-4 border-amber-500 p-4 rounded-r-lg text-sm text-amber-800">
       <p class="font-bold">⚠️ Firebase 資料庫連線異常</p>
-      <p class="mt-1">請確認您已在 Firebase 後台建立 <strong>Firestore Database</strong>，並將安全性規則（Rules）設為允許讀寫（<code>allow read, write: if true;</code>）。</p>
+      <p class="mt-1">請確認網路連線正常，或檢查 Firebase 後台 Firestore Rules 權限設定。</p>
     </div>
 
     <!-- ==================== 分頁 1：線上填答與個人結果 ==================== -->
     <section id="view-form">
       <!-- 基本資料選填 -->
       <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200 mb-6">
-        <h2 class="text-base font-bold text-slate-700 mb-3">填答者資訊（選填）</h2>
+        <div class="flex justify-between items-center mb-3">
+          <h2 class="text-base font-bold text-slate-700">填答者資訊（選填）</h2>
+          <button type="button" onclick="resetForm()" class="text-xs text-slate-500 hover:text-indigo-600 underline">
+            清空重填（下一位）
+          </button>
+        </div>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label class="block text-xs font-medium text-slate-500 mb-1">姓名 / 暱稱</label>
@@ -74,11 +79,12 @@
       <div id="questions-container" class="space-y-6"></div>
 
       <!-- 送出按鈕 -->
-      <div class="mt-8 flex flex-col items-center">
+      <div class="mt-8 flex flex-col items-center gap-3">
         <button id="submit-btn" onclick="submitSurvey()" class="w-full sm:w-auto px-8 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md transition disabled:opacity-50">
           計算並送出我的價值取向結果
         </button>
-        <p id="form-error" class="text-red-600 text-sm font-medium mt-3 hidden"></p>
+        <p id="form-success" class="text-emerald-600 text-sm font-bold hidden">✅ 已成功送出並同步至全體分析！</p>
+        <p id="form-error" class="text-red-600 text-sm font-medium hidden"></p>
       </div>
 
       <!-- 個人結果顯示區 (送出後顯示) -->
@@ -88,9 +94,14 @@
             <span class="text-xs font-bold uppercase tracking-wider text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded">個人分析報告</span>
             <h3 class="text-xl font-bold text-slate-800 mt-2" id="result-title">您的體育課程價值取向分佈</h3>
           </div>
-          <button onclick="switchTab('stats')" class="text-sm text-indigo-600 hover:text-indigo-800 font-medium underline">
-            前往查看全體教師分析 →
-          </button>
+          <div class="flex items-center gap-4">
+            <button onclick="resetForm()" class="text-sm text-slate-600 hover:text-indigo-600 font-medium underline">
+              填寫下一位
+            </button>
+            <button onclick="switchTab('stats')" class="text-sm text-indigo-600 hover:text-indigo-800 font-bold underline">
+              查看全體教師分析 →
+            </button>
+          </div>
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
@@ -132,7 +143,6 @@
         </div>
 
         <div id="stats-content" class="hidden space-y-8">
-          <!-- 圖表區 -->
           <div class="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
             <div>
               <h3 class="text-sm font-bold text-center text-slate-700 mb-3">五大價值取向全體平均得分雷達圖</h3>
@@ -146,7 +156,6 @@
             </div>
           </div>
 
-          <!-- 數據明細表格 -->
           <div>
             <h3 class="text-sm font-bold text-slate-700 mb-3">個別填答紀錄明細</h3>
             <div class="overflow-x-auto border border-slate-200 rounded-xl">
@@ -172,9 +181,6 @@
   </main>
 
   <script>
-    // =========================================================================
-    // Firebase 設定（已填入您的專屬專案金鑰）
-    // =========================================================================
     const firebaseConfig = {
       apiKey: "AIzaSyAATC3EtHqxIUsQleCVlrTdY1AxoQ3k9lI",
       authDomain: "pe-orientation.firebaseapp.com",
@@ -185,12 +191,8 @@
       measurementId: "G-62902WE2C5"
     };
 
-    // 管理員清空資料密碼（可依需求自行修改）
     const ADMIN_PASSWORD = "1234";
 
-    // =========================================================================
-    // 題目與五大價值取向定義
-    // =========================================================================
     const questionGroups = [
       {
         groupName: "第一組",
@@ -235,7 +237,6 @@
     let answers = {};
     let allRecords = [];
     let db = null;
-    let isFirebaseReady = false;
     let personalChartInstance = null;
     let groupRadarInstance = null;
     let groupBarInstance = null;
@@ -249,7 +250,6 @@
       try {
         firebase.initializeApp(firebaseConfig);
         db = firebase.firestore();
-        isFirebaseReady = true;
         listenToRecords();
       } catch (err) {
         console.error("Firebase 初始化失敗:", err);
@@ -278,7 +278,7 @@
                     <button type="button"
                       id="btn-${item.id}-${score}"
                       onclick="selectScore(${gIdx}, ${item.id}, ${score})"
-                      class="w-9 h-9 rounded-lg border border-slate-300 text-sm font-bold text-slate-600 hover:border-indigo-500 hover:text-indigo-600 transition">
+                      class="w-9 h-9 rounded-lg border border-slate-300 text-sm font-bold text-slate-600 hover:border-indigo-500 hover:text-indigo-600 transition bg-white">
                       ${score}
                     </button>
                   `).join('')}
@@ -329,9 +329,24 @@
       }
     }
 
+    function resetForm() {
+      answers = {};
+      document.getElementById("teacher-name").value = "";
+      document.getElementById("personal-result").classList.add("hidden");
+      document.getElementById("form-success").classList.add("hidden");
+      document.getElementById("form-error").classList.add("hidden");
+      const btn = document.getElementById("submit-btn");
+      btn.disabled = false;
+      btn.textContent = "計算並送出我的價值取向結果";
+      renderQuestions();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
     async function submitSurvey() {
       const errorEl = document.getElementById("form-error");
+      const successEl = document.getElementById("form-success");
       errorEl.classList.add("hidden");
+      successEl.classList.add("hidden");
 
       if (Object.keys(answers).length < 15) {
         errorEl.textContent = "請先完成所有三組（共 15 題）的 1～5 重要程度排序再送出！";
@@ -356,17 +371,25 @@
       btn.disabled = true;
       btn.textContent = "資料儲存中...";
 
+      // 8 秒逾時保護，防止按鈕永遠卡死
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("連線逾時，請檢查網路後再試一次")), 8000)
+      );
+
       try {
-        await db.collection("pe_value_orientations").add(record);
+        await Promise.race([
+          db.collection("pe_value_orientations").add(record),
+          timeoutPromise
+        ]);
+        successEl.classList.remove("hidden");
         renderPersonalResult(record);
       } catch (e) {
         console.error(e);
-        document.getElementById("firebase-warning").classList.remove("hidden");
-        errorEl.textContent = "儲存至雲端失敗，請確認已在 Firebase 後台開啟 Firestore Database 與公開讀寫規則。";
+        errorEl.textContent = e.message || "儲存至雲端失敗，請稍後再試。";
         errorEl.classList.remove("hidden");
       } finally {
         btn.disabled = false;
-        btn.textContent = "重新送出更新結果";
+        btn.textContent = "計算並送出我的價值取向結果";
       }
     }
 
